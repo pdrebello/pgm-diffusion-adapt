@@ -34,9 +34,15 @@ import train_fns
 from sync_batchnorm import patch_replication_callback
 import torch.utils.data as data
 
-data_dict = {'mnist_m': 'MNIST_M', 'mnist': 'MNIST', 'svhn': 'SVHN','syn_digits':'SYN_DIGITS','usps':'USPS', 'sign':'SIGN','syn_sign':'SYN_SIGN', 'sign64':'SIGN64','syn_sign64':'SYN_SIGN64'}
+import os
+import wandb
+os.environ["http_proxy"] = "http://proxy.cmu.edu:3128"
+os.environ["https_proxy"] = "http://proxy.cmu.edu:3128"
+os.environ['WANDB_API_KEY'] = '3c85f0f8bd34c1afe1b2d8d0c0a9e43513feebf3'
 
-def test_acc(model, test_loader):
+data_dict = {'mnist_m': 'MNIST_M', 'mnist': 'MNIST', 'svhn': 'SVHN','syn_digits':'SYN_DIGITS','usps':'USPS', 'sign':'SIGN','syn_sign':'SYN_SIGN', 'sign64':'SIGN64','syn_sign64':'SYN_SIGN64', 'mnist_m_synthetic':'MNIST_M_SYNTHETIC'}
+
+def test_acc(model, test_loader, epoch, source="s"):
 
     model.eval()
     with torch.no_grad():
@@ -59,6 +65,8 @@ def test_acc(model, test_loader):
     print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.2f}%)\n'.format(
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset) * 1.0))
+    wandb_metric = {f"test_loss_{source}": test_loss, f"test_acc_{source}": 100. * correct / len(test_loader.dataset) * 1.0}
+    wandb.log(wandb_metric)
     model.train()
 
     return correct / len(test_loader.dataset)*1.0
@@ -87,7 +95,7 @@ class source_domain_numpy(data.Dataset):
 
 
     self.domain_num = len(root_list)
-    print(self.len_s, self.domain_num)
+    
 
   def inverse_data(self, data, labels):
 
@@ -128,7 +136,7 @@ class source_domain_numpy(data.Dataset):
     return img_s, label_s, chosen_d
 
   def __len__(self):
-    return self.len_s*4
+    return self.len_s*self.domain_num
 
 class domain_test_numpy(data.Dataset):
   def __init__(self, root,  root_t, transform=None):  # last four are dummies
@@ -208,6 +216,12 @@ def run(config):
   model = __import__(config['model'])
   experiment_name = (config['experiment_name'] if config['experiment_name']
                        else utils.name_from_config(config))
+  run = wandb.init(
+        project="pgm_project", 
+        name="initial_run",
+        job_type="Train", 
+        config=config,
+    )
   print('Experiment name is %s' % experiment_name)
 
   # Next, build the model
@@ -331,8 +345,8 @@ def run(config):
   # Train for specified number of epochs, although we mostly track G iterations.
   for epoch in range(state_dict['epoch'], config['num_epochs']):
     if epoch%10 == 0:
-        test_acc(D, test_loader_s)
-        test_acc(D, test_loader_t)
+        test_acc(D, test_loader_s, epoch, "s")
+        test_acc(D, test_loader_t, epoch, "t")
     # Which progressbar to use? TQDM or my own?
     if config['pbar'] == 'mine':
       pbar = utils.progress(loaders,displaytype='s1k' if config['use_multiepoch_sampler'] else 'eta')
@@ -364,6 +378,8 @@ def run(config):
           print(', '.join(['itr: %d' % state_dict['itr']] 
                            + ['%s : %+4.3f' % (key, metrics[key])
                            for key in metrics]), end=' ')
+          wandb_metric = {key: metrics[key] if type(metrics[key]) == float else metrics[key].item() for key in metrics.keys()}
+          wandb.log(wandb_metric)
 
       # Save weights and copies as configured at specified interval
       if not (state_dict['itr'] % config['save_every']):
@@ -373,7 +389,7 @@ def run(config):
           if config['ema']:
             G_ema.eval()
         train_fns.save_and_sample(G, D, G_ema, z_, y_,yd_, fixed_z, fixed_y,fixed_yd,
-                                  state_dict, config, experiment_name)
+                                  state_dict, config, f"{experiment_name}_epoch{epoch}")
 
       # Test every specified interval
       if not (state_dict['itr'] % config['test_every']):

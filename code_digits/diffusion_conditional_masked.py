@@ -243,7 +243,6 @@ class DDPM(nn.Module):
         self.n_T = n_T
         self.device = device
         self.drop_prob = drop_prob
-        self.n_classes = n_classes
         self.loss_mse = nn.MSELoss()
 
     def forward(self, x, c, domain):
@@ -314,6 +313,47 @@ class DDPM(nn.Module):
         x_i_store = np.array(x_i_store)
         return x_i, x_i_store
 
+    def sample_from_one_domain(self, n_sample, size, target_domain, device, guide_w = 0.0):
+        x_i = torch.randn(n_sample, *size).to(device)  # x_T ~ N(0, 1), sample initial noise
+        c_i = torch.stack([torch.tensor([i,target_domain]) for i in torch.arange(0,self.nn_model.n_classes) ]).to(device)
+        c_i = c_i.repeat(int(n_sample/c_i.shape[0]), 1)
+
+        # don't drop context at test time
+        context_mask = torch.zeros_like(c_i[:,0]).to(device)
+
+        # double the batch
+        c_i = c_i.repeat(2, 1)
+        context_mask = context_mask.repeat(2)
+        context_mask[n_sample:] = 1. # makes second half of batch context free
+
+        x_i_store = [] # keep track of generated steps in case want to plot something 
+        for i in range(self.n_T, 0, -1):
+            print(f'sampling timestep {i}',end='\r')
+            t_is = torch.tensor([i / self.n_T]).to(device)
+            t_is = t_is.repeat(n_sample,1,1,1)
+
+            # double batch
+            x_i = x_i.repeat(2,1,1,1)
+            t_is = t_is.repeat(2,1,1,1)
+
+            z = torch.randn(n_sample, *size).to(device) if i > 1 else 0
+
+            # split predictions and compute weighting
+            eps = self.nn_model(x_i, c_i[:,0],c_i[:,1], t_is, context_mask)
+            eps1 = eps[:n_sample]
+            eps2 = eps[n_sample:]
+            eps = (1+guide_w)*eps1 - guide_w*eps2
+            x_i = x_i[:n_sample]
+            x_i = (
+                self.oneover_sqrta[i] * (x_i - eps * self.mab_over_sqrtmab[i])
+                + self.sqrt_beta_t[i] * z
+            )
+            if i%20==0 or i==self.n_T or i<8:
+                x_i_store.append(x_i.detach().cpu().numpy())
+        
+        x_i_store = np.array(x_i_store)
+        return x_i, x_i_store
+
 from  torchvision.datasets.vision import VisionDataset
 from PIL import Image
 import os
@@ -343,7 +383,8 @@ class MNIST_like(MNIST):
         if self.target_transform is not None:
             target = self.target_transform(target)
         target = torch.tensor([target, self.dataset_index])
-        
+        if(self.target_dataset):
+            target = torch.tensor([11, self.dataset_index])
         return img, target
 
 from train import source_domain_numpy
@@ -363,14 +404,17 @@ def train_mnist():
     batch_size = 256
     n_T = 400 # 500
     device = "cuda:0"
-    n_classes = 10
+    n_classes = 10 + 1
+    target_domain_index = 1
+    
     n_domains = 4
     n_feat = 128 # 128 ok, 256 better (but slower)
     lrate = 1e-4
     save_model = True
-    save_dir = './data/diffusion_outputs10/'
+    save_dir = './data/diffusion_outputs_masked/'
     ws_test = [0.0, 0.5, 2.0] # strength of generative guidance
-
+    save_gif = False
+    
     in_channels = 3 #1
     ddpm = DDPM(nn_model=ContextUnet(in_channels=in_channels, n_feat=n_feat, n_classes=n_classes, n_domains=n_domains), betas=(1e-4, 0.02), n_T=n_T, device=device, drop_prob=0.1)
     ddpm.to(device)
@@ -413,6 +457,9 @@ def train_mnist():
             x = x.to(device)
             c = c.to(device)
             d = d.to(device)
+
+            c[d == target_domain_index] = n_classes-1
+            
             loss = ddpm(x, c, d)
             loss.backward()
             if loss_ema is None:
@@ -441,11 +488,11 @@ def train_mnist():
                         x_real[k+(j*(n_classes*n_domains))] = 0 if (idx == -1) else x_real_samples[idx]
 
                 x_all = torch.cat([x_gen, x_real])
-                grid = make_grid(x_all*-1 + 1, nrow=10)
+                grid = make_grid(x_all*-1 + 1, nrow=n_classes)
                 save_image(grid, save_dir + f"image_ep{ep}_w{w}.png")
                 print('saved image at ' + save_dir + f"image_ep{ep}_w{w}.png")
 
-                if ep%5==0 or ep == int(n_epoch-1):
+                if (save_gif and ep%5==0) or ep == int(n_epoch-1):
                     # create gif of images evolving over time, based on x_gen_store
                     fig, axs = plt.subplots(nrows=int(n_sample/(n_domains*n_classes)), ncols=n_classes*n_domains,sharex=True,sharey=True,figsize=(8,3))
                     def animate_diff(i, x_gen_store):

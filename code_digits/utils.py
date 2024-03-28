@@ -771,6 +771,8 @@ def load_weights(G, D, state_dict, weights_root, experiment_name,
         print('Loading %s weights from %s...' % (name_suffix, root))
     else:
         print('Loading weights from %s...' % root)
+    root+= "_epoch{}".format(state_dict['epoch'])
+    
     if G is not None:
         G.load_state_dict(
             torch.load('%s/%s.pth' % (root, join_strings('_', ['G', name_suffix]))),
