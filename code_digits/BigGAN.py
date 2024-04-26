@@ -425,6 +425,39 @@ class Discriminator(nn.Module):
                 self.param_count += sum([p.data.nelement() for p in module.parameters()])
         print('Param count for D''s initialized parameters: %d' % self.param_count)
 
+    def get_features(self, x, y=None,yd=None, pack=False):
+        # Stick x into h for cleaner for loops without flow control
+        if pack:
+            x = self.pac_conv(x)
+        h = x
+        # Loop over blocks
+        for index, blocklist in enumerate(self.blocks):
+            for block in blocklist:
+                h = block(h)
+        # Apply global sum pooling as in SN-GAN
+        h = torch.sum(self.activation(h), [2, 3])
+        return h
+        
+    def get_prediction(self, h, y=None,yd=None, pack=False):
+        # Get initial class-unconditional output
+        h_in = self.linear_h(h)
+        out = self.linear(h_in)
+
+        if pack:
+            return out,None,None
+        else:
+            if self.AC:
+                out_mi = self.linear_mi(h)
+                out_c = self.linear_c(h)
+
+                out_mi_d = self.linear_mi_d(h)
+                out_c_d = self.linear_c_d(h)
+                return out, out_mi, out_c, out_mi_d, out_c_d
+            else:
+                out = out + torch.sum(self.embed(y) * h, 1, keepdim=True) * (1 - yd.float()) + torch.sum(
+                    self.embed_d(yd) * h, 1, keepdim=True)
+                return out, None, None, None, None
+                
     def forward(self, x, y=None,yd=None, pack=False):
         # Stick x into h for cleaner for loops without flow control
         if pack:

@@ -245,7 +245,27 @@ class DDPM(nn.Module):
         self.drop_prob = drop_prob
         self.n_classes = n_classes
         self.loss_mse = nn.MSELoss()
+        
+    def forward_without_loss(self, x, c, domain):
+        """
+        this method is used in training, so samples t and noise randomly
+        """
 
+        _ts = torch.randint(1, self.n_T+1, (x.shape[0],)).to(self.device)  # t ~ Uniform(0, n_T)
+        noise = torch.randn_like(x)  # eps ~ N(0, 1)
+
+        x_t = (
+            self.sqrtab[_ts, None, None, None] * x
+            + self.sqrtmab[_ts, None, None, None] * noise
+        )  # This is the x_t, which is sqrt(alphabar) x_0 + sqrt(1-alphabar) * eps
+        # We should predict the "error term" from this x_t. Loss is what we return.
+
+        # dropout context with some probability
+        context_mask = torch.bernoulli(torch.zeros_like(c)+self.drop_prob).to(self.device)
+        
+        # return MSE between added noise, and our predicted noise
+        return noise, self.nn_model(x_t, c, domain, _ts / self.n_T, context_mask)
+        
     def forward(self, x, c, domain):
         """
         this method is used in training, so samples t and noise randomly

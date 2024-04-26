@@ -451,7 +451,7 @@ def train_mnist():
     # hardcoding these here
     seed = 0
     set_seed(seed)
-    n_epoch = 1000
+    n_epoch = 500
     batch_size = 256
     n_T = 400 # 500
     device = "cuda:0"
@@ -460,9 +460,9 @@ def train_mnist():
     
     n_domains = 4
     n_feat = 128 # 128 ok, 256 better (but slower)
-    lrate = 1e-3
+    lrate = 1e-4
     save_model = True
-    save_dir = './data/diffusion_outputs_masked_sameC_e3/'
+    save_dir = './data/diffusion_outputs_masked_sameC/'
     #save_dir = './data/diffusion_outputs_masked_Apr21_transforms/'
     ws_test = [0.0, 0.5, 2.0] # strength of generative guidance
     save_gif = False

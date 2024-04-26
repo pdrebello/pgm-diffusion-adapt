@@ -40,7 +40,8 @@ os.environ["http_proxy"] = "http://proxy.cmu.edu:3128"
 os.environ["https_proxy"] = "http://proxy.cmu.edu:3128"
 os.environ['WANDB_API_KEY'] = '3c85f0f8bd34c1afe1b2d8d0c0a9e43513feebf3'
 
-data_dict = {'mnist_m': 'MNIST_M', 'mnist': 'MNIST', 'svhn': 'SVHN','syn_digits':'SYN_DIGITS','usps':'USPS', 'sign':'SIGN','syn_sign':'SYN_SIGN', 'sign64':'SIGN64','syn_sign64':'SYN_SIGN64', 'mnist_m_synthetic':'MNIST_M_SYNTHETIC'}
+data_dict = {'mnist_m': 'MNIST_M', 'mnist': 'MNIST', 'svhn': 'SVHN','syn_digits':'SYN_DIGITS','usps':'USPS', 'sign':'SIGN','syn_sign':'SYN_SIGN', 'sign64':'SIGN64','syn_sign64':'SYN_SIGN64', 'mnist_m_synthetic':'MNIST_M_SYNTHETIC',
+            'mnist_m_synthetic_epoch460':'MNIST_M_SYNTHETIC_EPOCH460', 'mnist_m_synthetic_pretrain':'MNIST_M_SYNTHETIC_PRETRAIN'}
 
 def test_acc(model, test_loader, epoch, source="s"):
 
