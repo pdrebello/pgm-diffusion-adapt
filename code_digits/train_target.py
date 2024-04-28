@@ -33,9 +33,11 @@ import losses
 import train_fns
 from sync_batchnorm import patch_replication_callback
 import torch.utils.data as data
+from discriminator import Discriminator
 
 import os
 import wandb
+
 os.environ["http_proxy"] = "http://proxy.cmu.edu:3128"
 os.environ["https_proxy"] = "http://proxy.cmu.edu:3128"
 os.environ['WANDB_API_KEY'] = '3c85f0f8bd34c1afe1b2d8d0c0a9e43513feebf3'
@@ -86,52 +88,57 @@ def train(model, criterion, optimizer, trainloader):
     for i, data in enumerate(trainloader, 0):
         # get the inputs; data is a list of [inputs, labels]
         inputs, labels, domain = data
-
+        inputs, labels = inputs.to(model.pac_conv.weight.device), labels.to(model.pac_conv.weight.device)
         # zero the parameter gradients
         optimizer.zero_grad()
-
+        #print(inputs.shape, labels.shape)
         # forward + backward + optimize
-        outputs = model(inputs)
+        outputs = model(inputs)[2]
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
 
         # print statistics
         running_loss += loss.item()
-        if i % 2000 == 1999:    # print every 2000 mini-batches
-            print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f}')
-            running_loss = 0.0
+        #if i % 2000 == 1999:    # print every 2000 mini-batches
+        #    print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / 2000:.3f}')
+        #    running_loss = 0.0
         
 
         _, predicted = torch.max(outputs.data, 1)
         total += labels.size(0)
         correct += (predicted == labels).sum().item()
     print('Finished Training')
-    return running_loss, float(correct)/total * 100
+    return running_loss/len(trainloader), float(correct)/total * 100
 
 def val(model, criterion, optimizer, testloader):
     correct = 0
+    correct_k = 0
     total = 0
+    running_loss = 0
     # since we're not training, we don't need to calculate the gradients for our outputs
     with torch.no_grad():
         for data in testloader:
             images, labels = data
+            images, labels = images.to(model.pac_conv.weight.device), labels.to(model.pac_conv.weight.device)
             # calculate outputs by running images through the network
-            outputs = model(images)
+            outputs = model(images)[2]
+            loss = criterion(outputs, labels)
             # the class with the highest energy is what we choose as prediction
             _, predicted = torch.max(outputs.data, 1)
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
 
             scores, indices = torch.topk(outputs, 3)
-            correct_k = labels[indices]
+            correct_k += (indices == labels.unsqueeze(1)).sum().item()
+            running_loss += loss.item()
             #import pdb
             #pdb.set_trace()
-    return float(correct)/total * 100,  float(correct_k)/total * 100
+    return running_loss/len(testloader), float(correct)/total * 100,  float(correct_k)/total * 100
     
 def run(config):
     utils.seed_rng(config['seed'])
-
+    device = "cuda:0"
     #transforms_train = transforms.Compose([transforms.Resize(config['resolution']),transforms.ToTensor(),transforms.Normalize([0.5], [0.5])])
     transforms_test = transforms.Compose([transforms.Resize(config['resolution']),transforms.ToTensor(),transforms.Normalize([0.5], [0.5])])
     transforms_train = transforms.Compose(
@@ -145,6 +152,8 @@ def run(config):
                     #transforms.Normalize(mean=[train_mean], std=[train_std]),
                     transforms.Normalize([0.5], [0.5])
                     ])
+    transforms_train = transforms.Compose([transforms.Resize(28),transforms.ToTensor(),transforms.Normalize([0.5], [0.5])])
+    transforms_test = transforms.Compose([transforms.Resize(28),transforms.ToTensor(),transforms.Normalize([0.5], [0.5])])
     
     data_set = source_domain_numpy(root=config['base_root'], root_list=config['source_dataset'], transform=transforms_train)
     loaders = torch.utils.data.DataLoader(data_set, batch_size=config['batch_size'], shuffle=True, num_workers=config['num_workers'], pin_memory=True,  worker_init_fn=np.random.seed,drop_last=True)
@@ -156,24 +165,30 @@ def run(config):
     #exit()
     run = wandb.init(
         project="pgm_project", 
-        name="train_target_mnist_m_augmented_pretrain",
+        name=config['name'],
         job_type="Train", 
         config=config,
     )
-    model = Net()
+    model = Discriminator().to(device)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
+    #optimizer = optim.SGD(model.parameters(), lr=0.0001, momentum=0.9)
+    optimizer = optim.Adam(model.parameters(), lr=2e-4)
 
     
+    if(not(os.path.exists(os.path.join("models", run.name)))):
+        os.mkdir(os.path.join("models", run.name))
     for epoch in range(config['num_epochs']):
+        print("Starting")
         loss, accuracy = train(model, criterion, optimizer, loaders)
         print("Train: {} - Loss: {}, Accuracy: {}".format(epoch, loss, accuracy))
 
-        val_accuracy, topk_val_accuracy = val(model, criterion, optimizer, test_loader)
-        print("Test: {} - Accuracy: {}| Tok: {}".format(epoch, val_accuracy, topk_val_accuracy))
+        val_loss, val_accuracy, topk_val_accuracy = val(model, criterion, optimizer, test_loader)
+        print("Test: {} - Loss: {}, Accuracy: {}, Tok: {}".format(epoch, val_loss, val_accuracy, topk_val_accuracy))
 
         wandb_metric = {'epoch':epoch, 'loss':loss, 'accuracy':accuracy,'val_accuracy':val_accuracy}
         wandb.log(wandb_metric)
+        if((epoch+1) % 10 == 0):
+            torch.save(model.state_dict(), os.path.join("models", run.name, f"epoch_{epoch}.pt"))
     wandb.finish()
 
 def main():
@@ -184,8 +199,10 @@ def main():
     #run(config)
     #config = {'base_root':'../data', 'source_dataset':'mnist,svhn,syn_digits', 'target_dataset':'mnist_m', 'batch_size':256,\
     #         'resolution':28,'num_workers':4, 'seed':1, 'num_epochs': 100}
-    config = {'base_root':'../data', 'source_dataset':'mnist,svhn,syn_digits,mnist_m_synthetic_pretrain', 'target_dataset':'mnist_m', 'batch_size':256,\
-             'resolution':28,'num_workers':4, 'seed':1, 'num_epochs': 100}
+    #config = {'name':'pretrain_best_adam_diffaug','base_root':'../data', 'source_dataset':'mnist,svhn,syn_digits,mnist_m_synthetic_epoch460', 'target_dataset':'mnist_m', 'batch_size':256, 'resolution':28,'num_workers':4, 'seed':1, 'num_epochs': 150}
+    config = {'name':'iterative_2_augmented','base_root':'../data', 'source_dataset':'mnist,svhn,syn_digits,mnist_m_synthetic_epoch460,mnist_m_synthetic_iterative', 'target_dataset':'mnist_m', 'batch_size':256, 'resolution':28,'num_workers':4, 'seed':1, 'num_epochs': 150}
+    config = {'name':'iterative_2_control10k','base_root':'../data', 'source_dataset':'mnist,svhn,syn_digits,mnist_m_synthetic_epoch460,mnist_m_synthetic_epoch460', 'target_dataset':'mnist_m', 'batch_size':256, 'resolution':28,'num_workers':4, 'seed':1, 'num_epochs': 150}
+    config = {'name':'iterative_2_onlysecond','base_root':'../data', 'source_dataset':'mnist,svhn,syn_digits,mnist_m_synthetic_iterative', 'target_dataset':'mnist_m', 'batch_size':256, 'resolution':28,'num_workers':4, 'seed':1, 'num_epochs': 150}
     #config = {'base_root':'../data', 'source_dataset':'mnist,svhn,syn_digits,mnist_m_synthetic', 'target_dataset':'mnist_m', 'batch_size':256,\
     #         'resolution':28,'num_workers':4, 'seed':1, 'num_epochs': 100}
     #config = {'base_root':'../data', 'source_dataset':'mnist_m_synthetic', 'target_dataset':'mnist_m', 'batch_size':256,\
