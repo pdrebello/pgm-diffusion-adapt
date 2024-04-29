@@ -4,7 +4,7 @@ from train import test_acc
 
 data_dict = {'mnist_m': 'MNIST_M', 'mnist': 'MNIST', 'svhn': 'SVHN','syn_digits':'SYN_DIGITS','usps':'USPS', 'sign':'SIGN','syn_sign':'SYN_SIGN', 'sign64':'SIGN64','syn_sign64':'SYN_SIGN64', 'mnist_m_synthetic':'MNIST_M_SYNTHETIC',
             'mnist_m_synthetic_epoch460':'MNIST_M_SYNTHETIC_EPOCH460', 'mnist_m_synthetic_pretrain':'MNIST_M_SYNTHETIC_PRETRAIN',\
-             'mnist_m_synthetic_iterative':'MNIST_M_SYNTHETIC_ITERATIVE'}
+             'mnist_m_synthetic_iterative':'MNIST_M_SYNTHETIC_ITERATIVE',}
 
 
 class source_domain_numpy(data.Dataset):
@@ -15,7 +15,7 @@ class source_domain_numpy(data.Dataset):
     self.len_s = 20000
     root_list = root_list.split(',')
     for root_s in root_list:
-        source_root = data_dict[root_s]
+        source_root = root_s.upper() #data_dict[root_s]
         
         data_source, labels_source = torch.load(os.path.join(root, root_s, source_root + '_train.pt'))
         l = data_source.shape[0]
@@ -58,7 +58,7 @@ class source_domain_numpy(data.Dataset):
 class domain_test_numpy(data.Dataset):
   def __init__(self, root,  root_t, transform=None):  # last four are dummies
       self.transform = transform
-      domain_root = data_dict[root_t]
+      domain_root = root_t.upper() #data_dict[root_t]
       self.len_t = 9000
       self.data_domain, self.labels_domain = torch.load(os.path.join(root, root_t, domain_root + '_test.pt'))
       l = self.data_domain.shape[0]
@@ -142,7 +142,7 @@ def diffusion_train(alternate_step, ddpm, config):
             pbar.set_description(f"diffusion_loss: {diffusion_loss_ema:.4f}")
             optim.step()
         ddpm.eval()
-
+        
         #if save_model and (ep % 10 == 0 or ep == int(n_epoch-1)):
         #torch.save(ddpm.state_dict(), save_dir + f"model_{ep}.pth")
         #print('saved model at ' + save_dir + f"model_{ep}.pth")
@@ -195,6 +195,7 @@ def discriminator_train(alternate_step, config):
     if("augmentation" in config and config["augmentation"]):
         transforms_train = transforms.Compose(
                     [
+                    transforms.Resize(28),
                     transforms.RandomRotation(10),
                     transforms.RandomAffine(degrees=20, translate=(0.1,0.1), scale=(0.9, 1.1)),
                     transforms.ColorJitter(brightness=0.2, contrast=0.2),
@@ -231,7 +232,10 @@ def discriminator_train(alternate_step, config):
 
     model = Discriminator().to(config["device"])
 
-    criterion = nn.CrossEntropyLoss()
+    if('label_smoothing' in config and config["label_smoothing"]):
+        criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    else:
+        criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=2e-4)
 
     for epoch in range(n_epoch):
@@ -252,7 +256,8 @@ def discriminator_train(alternate_step, config):
 
 def run():
     config = {'batch_size':256, 
-              "model_dir": 'iteration_correctsyn_aug', 
+              #"model_dir": 'iteration_correctsyn_aug_midnight', 
+              "model_dir": 'iteration_correctsyn', 
               "diffusion_epochs": 60, 
               "discriminator_epochs": 150, 
               'device':"cuda:0",
@@ -267,7 +272,8 @@ def run():
              'n_classes': 10 + 1,
              'n_domains':4,
              'in_channels': 3,
-             'augmentation':True}
+             'augmentation':True,
+             'label_smoothing':True}
     
     seed = 0
     set_seed(seed)
@@ -284,12 +290,32 @@ def run():
         os.mkdir("./data/{}".format(config["model_dir"]))
 
     ddpm.load_state_dict(torch.load("./data/diffusion_outputs_masked_sameC/model_490.pth", map_location=config["device"]))
+    
+    mixed_epochs = 4
+    pure_epochs = 4
+
+    old_source = config['source_dataset']
     diffusion_inference(0, ddpm, config)
     discriminator_train(0, config)
-    for alternate_step in range(1, 5):
+    for alternate_step in range(1, mixed_epochs+1):
+        
         ddpm = diffusion_train(alternate_step, ddpm, config)
         diffusion_inference(alternate_step, ddpm, config)
+
+        if(alternate_step == mixed_epochs):
+            config['source_dataset'] = 'mnist_m_{}_{},mnist_m_{}_{}'.format(config["model_dir"], alternate_step -2,config["model_dir"], alternate_step -1)
+
+        print(config['source_dataset'])
         discriminator_train(alternate_step, config)
+        
+
+    for alternate_step in range(mixed_epochs+1,mixed_epochs+1+pure_epochs):
+        config['source_dataset'] = old_source
+        ddpm = diffusion_train(alternate_step, ddpm, config)
+        diffusion_inference(alternate_step, ddpm, config)
+        config['source_dataset'] = 'mnist_m_{}_{},mnist_m_{}_{}'.format(config["model_dir"], alternate_step -2,config["model_dir"], alternate_step -1)
+        discriminator_train(alternate_step, config)
+
 
 
 

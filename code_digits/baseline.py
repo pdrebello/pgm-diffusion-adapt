@@ -8,8 +8,6 @@ data_dict = {'mnist_m': 'MNIST_M', 'mnist': 'MNIST', 'svhn': 'SVHN','syn_digits'
              'mnist_m_synthetic_iterative':'MNIST_M_SYNTHETIC_ITERATIVE',}
 import alternating_diffusion as alternating_diffusion
 
-alternating_diffusion.data_dict['mnist_m_iteration_test_3'] = 'MNIST_M_ITERATION_TEST_3'
-alternating_diffusion.data_dict['mnist_m_iteration_test_4'] = 'MNIST_M_ITERATION_TEST_4'
 
 def discriminator_train(alternate_step, config):
     n_epoch = config['discriminator_epochs']
@@ -57,7 +55,11 @@ def discriminator_train(alternate_step, config):
 
     model = Discriminator().to(config["device"])
 
-    criterion = nn.CrossEntropyLoss()
+    if('label_smoothing' in config and config["label_smoothing"]):
+        criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+    else:
+        criterion = nn.CrossEntropyLoss()
+    
     optimizer = optim.Adam(model.parameters(), lr=2e-4)
 
     for epoch in range(n_epoch):
@@ -80,12 +82,15 @@ def run():
     config = {'batch_size':256, 
               #"model_dir": 'baseline_mn,sv,syn', 
               #"model_dir": 'baseline_gold', 
-              "model_dir": 'baseline_mnistm_from_diffusion_aug', #'baseline_mnistm_from_diffusion', 
+              #"model_dir": 'baseline_mnistm_from_correctsyn_aug_ls', #'baseline_mnistm_from_diffusion', 
+              "model_dir": 'baseline_mnistm_from_correctsyn_4_aug_ls',
               "diffusion_epochs": 60, 
-              "discriminator_epochs": 100, 
+              "discriminator_epochs": 150, 
               'device':"cuda:0",
               'base_root':'../data', 
-              'source_dataset': 'mnist_m_iteration_test_3,mnist_m_iteration_test_4',
+              #'source_dataset': 'mnist_m_iteration_test_3,mnist_m_iteration_test_4',
+              #'source_dataset': 'mnist_m_iteration_correctsyn_2,mnist_m_iteration_correctsyn_3,mnist_m_iteration_correctsyn_4',
+              'source_dataset': 'mnist_m_iteration_correctsyn_4',
               #'source_dataset': 'mnist_m',
               'target_dataset':'mnist_m',
               'batch_size':256, 
@@ -97,10 +102,14 @@ def run():
              'n_domains':4,
              'in_channels': 3,
              'ignore_synthetic': True,
-             'augmentation':True}
+             'augmentation':True,
+             'label_smoothing': True}
     
     seed = 0
     set_seed(seed)
+
+    for ds in config["source_dataset"].split(","):
+        alternating_diffusion.data_dict[ds] = ds.upper()
 
     if(not(os.path.exists("./data/{}".format(config["model_dir"])))):
         os.mkdir("./data/{}".format(config["model_dir"]))

@@ -27,6 +27,7 @@ from torchvision.utils import save_image, make_grid
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
 import numpy as np
+from discriminator import Discriminator
 
 class ResidualConvBlock(nn.Module):
     def __init__(
@@ -358,10 +359,10 @@ class DDPM(nn.Module):
                 self.oneover_sqrta[i] * (x_i - eps * self.mab_over_sqrtmab[i])
                 + self.sqrt_beta_t[i] * z
             )
-            if i%20==0 or i==self.n_T or i<8:
-                x_i_store.append(x_i.detach().cpu().numpy())
+            #if i%20==0 or i==self.n_T or i<8:
+            #    x_i_store.append(x_i.detach().cpu().numpy())
         
-        x_i_store = np.array(x_i_store)
+        #x_i_store = np.array(x_i_store)
         return x_i, x_i_store
 
     def sample_from_one_domain(self, n_sample, size, target_domain, device, guide_w = 0.0):
@@ -399,11 +400,8 @@ class DDPM(nn.Module):
                 self.oneover_sqrta[i] * (x_i - eps * self.mab_over_sqrtmab[i])
                 + self.sqrt_beta_t[i] * z
             )
-            if i%20==0 or i==self.n_T or i<8:
-                x_i_store.append(x_i.detach().cpu().numpy())
-        
-        x_i_store = np.array(x_i_store)
-        return x_i, x_i_store
+            
+        return x_i, None
 
 from  torchvision.datasets.vision import VisionDataset
 from PIL import Image
@@ -460,11 +458,12 @@ def train_mnist():
     
     n_domains = 4
     n_feat = 128 # 128 ok, 256 better (but slower)
-    lrate = 1e-3
+    lrate = 1e-4
     save_model = True
-    save_dir = './data/diffusion_outputs_masked_sameC_e3/'
+    save_dir = './data/diffusion_outputs_masked_iterative_startAt30/'
     #save_dir = './data/diffusion_outputs_masked_Apr21_transforms/'
-    ws_test = [0.0, 0.5, 2.0] # strength of generative guidance
+    #ws_test = [0.0, 0.5, 2.0] # strength of generative guidance
+    ws_test = [2.0]
     save_gif = False
     
     in_channels = 3 #1
@@ -472,7 +471,8 @@ def train_mnist():
     ddpm.to(device)
 
     # optionally load a model
-    ddpm.load_state_dict(torch.load("./data/diffusion_outputs_masked/model_99.pth"))
+    #ddpm.load_state_dict(torch.load("./data/diffusion_outputs_masked_sameC/model_490.pth"))
+    ddpm.load_state_dict(torch.load("./data/diffusion_outputs_masked_sameC/model_30.pth"))
 
     #tf = transforms.Compose([transforms.ToTensor()]) # mnist is already normalised 0 to 1
     #tf = transforms.Compose([transforms.Resize(28), transforms.ToTensor()]) 
@@ -517,6 +517,9 @@ def train_mnist():
 
     optim = torch.optim.Adam(ddpm.parameters(), lr=lrate)
     ce_loss_criterion = nn.CrossEntropyLoss()
+
+    discriminator = Discriminator().to(device)
+    discriminator.load_state_dict(torch.load("models/pretrain_best_adam_diffaug/epoch_19.pt"))
     
     for ep in range(n_epoch):
         print(f'epoch {ep}')
@@ -534,27 +537,34 @@ def train_mnist():
             x = x.to(device)
             c = c.to(device)
             d = d.to(device)
+            
+            pseudo_outputs = discriminator((x[d == target_domain_index]-0.5)/(0.5))[2]
+            _, pseudo_labels = torch.max(pseudo_outputs.data, 1)
 
-            c[d == target_domain_index] = n_classes-1
+            
+            #c[d == target_domain_index] = n_classes-1
+            c[d == target_domain_index] = pseudo_labels
             
             loss_pos, ts, noise = ddpm(x, c, d)
-            loss_neg = ddpm.forward_neg(x, c, d, ts, noise)
+            #loss_neg = ddpm.forward_neg(x, c, d, ts, noise)
 
-            preds = torch.vstack([loss_pos, loss_neg]).T
-            preds = preds[d != target_domain_index]
-            target = torch.ones(len(preds)).long().to(device)
+            #preds = torch.vstack([loss_pos, loss_neg]).T
+            #preds = preds[d != target_domain_index]
+            #target = torch.ones(len(preds)).long().to(device)
             diffusion_loss = loss_pos.mean()
 
-            ce_loss = ce_loss_criterion(preds, target)
-            #loss = loss_pos - alpha * loss_neg
-            loss = diffusion_loss + alpha * ce_loss
+            #ce_loss = ce_loss_criterion(preds, target)
+            
+            #loss = diffusion_loss + alpha * ce_loss
+            loss = diffusion_loss
             loss.backward()
             if diffusion_loss_ema is None:
                 diffusion_loss_ema = diffusion_loss.item()
-                ce_loss_ema = ce_loss.item()
+                #ce_loss_ema = ce_loss.item()
+                ce_loss_ema = 0
             else:
                 diffusion_loss_ema = 0.95 * diffusion_loss_ema + 0.05 * diffusion_loss.item()
-                ce_loss_ema = 0.95 * ce_loss_ema + 0.05 * ce_loss.item()
+                #ce_loss_ema = 0.95 * ce_loss_ema + 0.05 * ce_loss.item()
             pbar.set_description(f"diffusion_loss: {diffusion_loss_ema:.4f} | ce_loss: {ce_loss_ema:.4f}")
             optim.step()
             #break
@@ -592,23 +602,7 @@ def train_mnist():
                 save_image(grid, save_dir + f"image_ep{ep}_w{w}.png")
                 print('saved image at ' + save_dir + f"image_ep{ep}_w{w}.png")
 
-                if (save_gif and ep%5==0) or ep == int(n_epoch-1):
-                    # create gif of images evolving over time, based on x_gen_store
-                    fig, axs = plt.subplots(nrows=int(n_sample/(n_domains*n_classes)), ncols=n_classes*n_domains,sharex=True,sharey=True,figsize=(8,3))
-                    def animate_diff(i, x_gen_store):
-                        print(f'gif animating frame {i} of {x_gen_store.shape[0]}', end='\r')
-                        plots = []
-                        for row in range(int(n_sample/(n_classes*n_domains))):
-                            for col in range(n_classes*n_domains):
-                                axs[row, col].clear()
-                                axs[row, col].set_xticks([])
-                                axs[row, col].set_yticks([])
-                                # plots.append(axs[row, col].imshow(x_gen_store[i,(row*n_classes)+col,0],cmap='gray'))
-                                plots.append(axs[row, col].imshow(-x_gen_store[i,(row*n_classes*n_domains)+col,0],cmap='gray',vmin=(-x_gen_store[i]).min(), vmax=(-x_gen_store[i]).max()))
-                        return plots
-                    ani = FuncAnimation(fig, animate_diff, fargs=[x_gen_store],  interval=200, blit=False, repeat=True, frames=x_gen_store.shape[0])    
-                    ani.save(save_dir + f"gif_ep{ep}_w{w}.gif", dpi=100, writer=PillowWriter(fps=5))
-                    print('saved image at ' + save_dir + f"gif_ep{ep}_w{w}.gif")
+
         # optionally save model
         #if save_model and ep == int(n_epoch-1):
         if save_model and (ep % 10 == 0 or ep == int(n_epoch-1)):
