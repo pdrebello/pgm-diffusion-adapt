@@ -96,13 +96,21 @@ def diffusion_train(alternate_step, ddpm, config):
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=5)
 
     n_epoch = config['diffusion_epochs']
-    if(alternate_step == 1):
-        ddpm.load_state_dict(torch.load("./data/diffusion_outputs_masked_sameC/model_490.pth", map_location=config["device"]))
+    load_path = "./data/{}/alt_{}/diffusion_model_{}.pth".format(config["model_dir"], alternate_step-1, config["diffusion_epochs"]-1)
+    if('start_diffusion_from_scratch' in config and config['start_diffusion_from_scratch']):
+        pass
+    elif(alternate_step == 0):
+        n_epoch = 150
+        pass
+    elif(os.path.exists(load_path)):
+        ddpm.load_state_dict(torch.load(load_path, map_location=config["device"]))
     else:
-        ddpm.load_state_dict(torch.load("./data/{}/alt_{}/diffusion_model_{}.pth".format(config["model_dir"], alternate_step-1, config["diffusion_epochs"]-1), map_location=config["device"]))
+        ddpm.load_state_dict(torch.load("./data/diffusion_outputs_masked_sameC/model_490.pth", map_location=config["device"]))
 
-
-    if(alternate_step == 0):
+    if(alternate_step == 0 and "start_with_discriminator" in config and config["start_with_discriminator"]):
+        discriminator = Discriminator().to(config["device"])
+        discriminator.load_state_dict(torch.load("./data/{}/alt_{}/discriminator_{}.pth".format(config["model_dir"],  alternate_step-1, config["discriminator_epochs"]-1), map_location=config["device"]))        
+    elif(alternate_step == 0):
         discriminator = None
     else:
         discriminator = Discriminator().to(config["device"])
@@ -124,8 +132,8 @@ def diffusion_train(alternate_step, ddpm, config):
             c = c.to(config['device'])
             d = d.to(config['device'])
 
-            if(alternate_step == 0):
-                c[d == config['target_domain_index']] = n_classes-1
+            if(discriminator is None):
+                c[d == config['target_domain_index']] = config['n_classes']-1
             else:
                 pseudo_outputs = discriminator((x[d == config['target_domain_index']]-0.5)/(0.5))[2]
                 _, pseudo_labels = torch.max(pseudo_outputs.data, 1)
@@ -192,7 +200,7 @@ def discriminator_train(alternate_step, config):
     save_dir = "./data/{}/alt_{}".format(config["model_dir"],  alternate_step)
     if(not(os.path.exists(save_dir))):
         os.mkdir(save_dir)
-    if("augmentation" in config and config["augmentation"]):
+    if("augmentation" in config and config["augmentation"] and alternate_step >= 5):
         transforms_train = transforms.Compose(
                     [
                     transforms.Resize(28),
@@ -212,7 +220,10 @@ def discriminator_train(alternate_step, config):
     #if(alternate_step == 0):
     #    source_dataset = config['source_dataset']+","+ "mnist_m_synthetic_epoch460"
     #else:
-    source_dataset = config['source_dataset']+","+"mnist_m_{}_{}".format(config["model_dir"], alternate_step)
+    if(alternate_step >=0):
+        source_dataset = config['source_dataset']+","+"mnist_m_{}_{}".format(config["model_dir"], alternate_step)
+    else:
+        source_dataset = config['source_dataset']
         
     data_set = source_domain_numpy(root=config['base_root'], root_list=source_dataset, transform=transforms_train)
     loaders = torch.utils.data.DataLoader(data_set, batch_size=config['batch_size'], shuffle=True, num_workers=config['num_workers'], pin_memory=True,  worker_init_fn=np.random.seed,drop_last=True)
@@ -257,8 +268,10 @@ def discriminator_train(alternate_step, config):
 def run():
     config = {'batch_size':256, 
               #"model_dir": 'iteration_correctsyn_aug_midnight', 
-              "model_dir": 'iteration_correctsyn', 
-              "diffusion_epochs": 60, 
+              "model_dir": 'start_with_discriminator_May29_diffusionfromscratch', 
+              'start_with_discriminator':True,
+              #'start_diffusion_from_scratch':True,
+              "diffusion_epochs": 60, #100, 
               "discriminator_epochs": 150, 
               'device':"cuda:0",
               'base_root':'../data', 
@@ -266,7 +279,8 @@ def run():
               'target_dataset':'mnist_m',
               'batch_size':256, 
               'resolution':28,'num_workers':4, 
-              'lrate' : 1e-4, 'target_domain_index' : 1,
+              'lrate' : 1e-4, 
+              'target_domain_index' : 1,
               'synthetic_size': 21000,
              #'synthetic_size': 1420,
              'n_classes': 10 + 1,
@@ -289,15 +303,17 @@ def run():
     if(not(os.path.exists("./data/{}".format(config["model_dir"])))):
         os.mkdir("./data/{}".format(config["model_dir"]))
 
-    ddpm.load_state_dict(torch.load("./data/diffusion_outputs_masked_sameC/model_490.pth", map_location=config["device"]))
+    #ddpm.load_state_dict(torch.load("./data/diffusion_outputs_masked_sameC/model_490.pth", map_location=config["device"]))
     
-    mixed_epochs = 4
-    pure_epochs = 4
+    mixed_epochs = 5
+    pure_epochs = 5
 
     old_source = config['source_dataset']
-    diffusion_inference(0, ddpm, config)
-    discriminator_train(0, config)
-    for alternate_step in range(1, mixed_epochs+1):
+    #diffusion_inference(0, ddpm, config)
+    if(config["start_with_discriminator"]):
+        discriminator_train(-1, config)
+        
+    for alternate_step in range(mixed_epochs+1):
         
         ddpm = diffusion_train(alternate_step, ddpm, config)
         diffusion_inference(alternate_step, ddpm, config)
