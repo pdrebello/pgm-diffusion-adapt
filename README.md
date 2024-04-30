@@ -14,7 +14,7 @@ Real Images             |  Synthetic Images (Generated without Access to True La
 
 ### Data
 
-1. Download file from 
+1. Download file from https://drive.google.com/file/d/1bV0PjHRhu-jHUf_dS4LE44qmA29AeRd_/view?usp=sharing
 2. Unzip (replace existing data directory if asked)
     ```sh
     unzip data.zip
