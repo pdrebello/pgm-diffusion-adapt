@@ -1,13 +1,11 @@
 from diffusion_conditional_masked import *
 from train_target import *
 from train import test_acc
-
+import alternating_diffusion as alternating_diffusion
 
 data_dict = {'mnist_m': 'MNIST_M', 'mnist': 'MNIST', 'svhn': 'SVHN','syn_digits':'SYN_DIGITS','usps':'USPS', 'sign':'SIGN','syn_sign':'SYN_SIGN', 'sign64':'SIGN64','syn_sign64':'SYN_SIGN64', 'mnist_m_synthetic':'MNIST_M_SYNTHETIC',
             'mnist_m_synthetic_epoch460':'MNIST_M_SYNTHETIC_EPOCH460', 'mnist_m_synthetic_pretrain':'MNIST_M_SYNTHETIC_PRETRAIN',\
              'mnist_m_synthetic_iterative':'MNIST_M_SYNTHETIC_ITERATIVE',}
-import alternating_diffusion as alternating_diffusion
-
 
 def discriminator_train(alternate_step, config):
     n_epoch = config['discriminator_epochs']
@@ -80,23 +78,16 @@ def discriminator_train(alternate_step, config):
 
 def run():
     config = {'batch_size':256, 
-              #"model_dir": 'baseline_mn,sv,syn', 
-              #"model_dir": 'baseline_gold', 
-              #"model_dir": 'baseline_mnistm_from_correctsyn_aug_ls', #'baseline_mnistm_from_diffusion', 
-              "model_dir": 'baseline_mnistm_from_correctsyn_4_aug_ls',
+              "model_dir": 'baseline_poolNN',
               "diffusion_epochs": 60, 
               "discriminator_epochs": 150, 
               'device':"cuda:0",
               'base_root':'../data', 
-              #'source_dataset': 'mnist_m_iteration_test_3,mnist_m_iteration_test_4',
-              #'source_dataset': 'mnist_m_iteration_correctsyn_2,mnist_m_iteration_correctsyn_3,mnist_m_iteration_correctsyn_4',
-              'source_dataset': 'mnist_m_iteration_correctsyn_4',
-              #'source_dataset': 'mnist_m',
+              'source_dataset': 'mnist,svhn,syn_digits',
               'target_dataset':'mnist_m',
               'batch_size':256, 
               'resolution':28,'num_workers':4, 
               'lrate' : 1e-4, 'target_domain_index' : 1,
-              #'synthetic_size': 21000,
              'synthetic_size': 22000,
              'n_classes': 10 + 1,
              'n_domains':4,

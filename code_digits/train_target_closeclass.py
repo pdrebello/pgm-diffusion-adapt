@@ -209,14 +209,16 @@ def run(config):
     
     model = Discriminator().to(device) #Net()
 
-    #reload_path = "/home/pdsouzar/DA_Infer/data/weights/mnist,mnist_m,svhn,syn_digits_mnist_m/_num_domain: 4_Twin_AC_AC_weight1.0_BigGAN_seed2019_Gch64_Dch64_bs200_nDs4_Glr2.0e-04_Dlr2.0e-04_Gnlrelu_Dnlrelu_GinitN02_DinitN02_Gshared_ema_epoch999/D.pth"
-    #model.load_state_dict(torch.load(reload_path, map_location=device))
+    reload_path = "/home/pdsouzar/DA_Infer/data/weights/mnist,mnist_m,svhn,syn_digits_mnist_m/_num_domain: 4_Twin_AC_AC_weight1.0_BigGAN_seed2019_Gch64_Dch64_bs200_nDs4_Glr2.0e-04_Dlr2.0e-04_Gnlrelu_Dnlrelu_GinitN02_DinitN02_Gshared_ema_epoch999/D.pth"
+    model.load_state_dict(torch.load(reload_path, map_location=device))
     criterion = nn.CrossEntropyLoss()
     #optimizer = optim.SGD(model.parameters(), lr=0.001, momentum=0.9)
     optimizer = optim.Adam(model.parameters(), lr=2e-4)
 
     
     val_loss, val_accuracy = val(model, criterion, optimizer, test_loader, -1)
+    import pdb
+    pdb.set_trace()
     if(not(os.path.exists(os.path.join("models", run.name)))):
         os.mkdir(os.path.join("models", run.name))
     
@@ -250,6 +252,7 @@ def main():
     #         'resolution':28,'num_workers':4, 'seed':1, 'num_epochs': 100}
     #config = {'name':"train_target_mnist_m_augmented_closeclass", 'base_root':'../data', 'source_dataset':'mnist,svhn,syn_digits,mnist_m_synthetic_epoch460', 'target_dataset':'mnist_m', 'batch_size':256,'resolution':28,'num_workers':4, 'seed':1, 'num_epochs': 150}
     config = {'name':"train_target_mnist_m_augmented_closeclass_onlysource_test", 'base_root':'../data', 'source_dataset':'mnist,svhn,syn_digits', 'target_dataset':'mnist_m', 'batch_size':256,'resolution':28,'num_workers':4, 'seed':1, 'num_epochs': 150}
+    config = {'name':"train_from_gan_baseline", 'base_root':'../data', 'source_dataset':'mnist,svhn,syn_digits', 'target_dataset':'mnist_m', 'batch_size':256,'resolution':28,'num_workers':4, 'seed':1, 'num_epochs': 150}
     #
 
     
